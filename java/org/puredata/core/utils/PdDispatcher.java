@@ -29,7 +29,8 @@ public abstract class PdDispatcher implements PdReceiver {
 	private final Map<String, Set<PdListener>> listeners = new HashMap<String, Set<PdListener>>();
 
 	/**
-	 * Subscribe to Pd messages sent to the given symbol and register a listener to this symbol
+	 * Register a listener for Pd messages to the given symbol; subscribe to the symbol if this is
+	 * the first listener for this symbol
 	 * 
 	 * @param symbol    receiver symbol in Pd
 	 * @param listener
@@ -49,20 +50,21 @@ public abstract class PdDispatcher implements PdReceiver {
 	
 	/**
 	 * Remove a listener associated with a symbol; unsubscribe from Pd messages to symbol
-	 * if no listeners are left
+     * if no listeners are left
 	 * 
 	 * @param symbol    receiver symbol in Pd
 	 * @param listener
 	 */
 	public synchronized void removeListener(String symbol, PdListener listener) {
 		Set<PdListener> selected = listeners.get(symbol);
-		if (selected == null) return;
-		selected.remove(listener);
-		if (selected.isEmpty()) {
-			PdBase.unsubscribe(symbol);
-			listeners.remove(symbol);
+		if (selected != null) {
+			selected.remove(listener);
+			if (selected.isEmpty()) {
+				PdBase.unsubscribe(symbol);
+				listeners.remove(symbol);
+			}
 		}
-	}
+    }
 	
 	/**
 	 * Unsubscribe from Pd messages and release all resources
@@ -76,8 +78,8 @@ public abstract class PdDispatcher implements PdReceiver {
 	
 	@Override
 	protected void finalize() throws Throwable {
-		super.finalize();
 		release();
+		super.finalize();
 	}
 	
 	/**

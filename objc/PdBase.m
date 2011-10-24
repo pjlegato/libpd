@@ -44,22 +44,15 @@ static NSArray *decodeList(int argc, t_atom *argv) {
   NSMutableArray *list = [[[NSMutableArray alloc] initWithCapacity:argc] autorelease];
   for (int i = 0; i < argc; i++) {
     t_atom a = argv[i];
-    switch (a.a_type) {
-      case A_FLOAT: {
-        float x = a.a_w.w_float;  
-        [list addObject:[NSNumber numberWithFloat:x]];
-        break;
-      }
-      case A_SYMBOL: {
-        char *s = a.a_w.w_symbol->s_name;  
-        [list addObject:[NSString stringWithCString:s encoding:NSASCIIStringEncoding]];
-        break;
-      }
-      default: {
-        NSLog(@"PdBase: element type unknown: %i", a.a_type);
-        break;
-      }
-    } 
+    if (libpd_is_float(a)) {
+      float x = libpd_get_float(a);
+      [list addObject:[NSNumber numberWithFloat:x]];
+    } else if (libpd_is_symbol(a)) {
+      const char *s = libpd_get_symbol(a);
+      [list addObject:[NSString stringWithCString:s encoding:NSASCIIStringEncoding]];
+    } else {
+      NSLog(@"PdBase: element type unsupported: %i", a.a_type);
+    }
   }
   return (NSArray *)list;
 }
@@ -132,9 +125,11 @@ static void messageHook(const char *src, const char* sym, int argc, t_atom *argv
 }
 
 + (void)setDelegate:(NSObject<PdReceiverDelegate> *)newDelegate {
-  [delegate release];
-  delegate = newDelegate;
-  [delegate retain];
+  @synchronized(self) {
+    [newDelegate retain];
+    [delegate release];
+    delegate = newDelegate;
+  }
 }
 
 + (void *)subscribe:(NSString *)symbol {
@@ -149,39 +144,39 @@ static void messageHook(const char *src, const char* sym, int argc, t_atom *argv
   }
 }
 
-+ (void)sendBangToReceiver:(NSString *)receiverName {
++ (int)sendBangToReceiver:(NSString *)receiverName {
   @synchronized(self) {
-    libpd_bang([receiverName cStringUsingEncoding:NSASCIIStringEncoding]);
+    return libpd_bang([receiverName cStringUsingEncoding:NSASCIIStringEncoding]);
   }
 }
 
-+ (void)sendFloat:(float)value toReceiver:(NSString *)receiverName {
++ (int)sendFloat:(float)value toReceiver:(NSString *)receiverName {
   @synchronized(self) {
-    libpd_float([receiverName cStringUsingEncoding:NSASCIIStringEncoding], value);
+    return libpd_float([receiverName cStringUsingEncoding:NSASCIIStringEncoding], value);
   }
 }
 
-+ (void)sendSymbol:(NSString *)symbol toReceiver:(NSString *)receiverName {
++ (int)sendSymbol:(NSString *)symbol toReceiver:(NSString *)receiverName {
   @synchronized(self) {
-    libpd_symbol([receiverName cStringUsingEncoding:NSASCIIStringEncoding],
-        [symbol cStringUsingEncoding:NSASCIIStringEncoding]);
+    return libpd_symbol([receiverName cStringUsingEncoding:NSASCIIStringEncoding],
+                        [symbol cStringUsingEncoding:NSASCIIStringEncoding]);
   }
 }
 
-+ (void)sendList:(NSArray *)list toReceiver:(NSString *)receiverName {
++ (int)sendList:(NSArray *)list toReceiver:(NSString *)receiverName {
   @synchronized(self) {
-    libpd_start_message();
+    if (libpd_start_message([list count])) return -100;
     encodeList(list);
-    libpd_finish_list([receiverName cStringUsingEncoding:NSASCIIStringEncoding]);
+    return libpd_finish_list([receiverName cStringUsingEncoding:NSASCIIStringEncoding]);
   }
 }
 
-+ (void)sendMessage:(NSString *)message withArguments:(NSArray *)list toReceiver:(NSString *)receiverName {
++ (int)sendMessage:(NSString *)message withArguments:(NSArray *)list toReceiver:(NSString *)receiverName {
   @synchronized(self) {
-    libpd_start_message();
+    if (libpd_start_message([list count])) return -100;
     encodeList(list);
-    libpd_finish_message([receiverName cStringUsingEncoding:NSASCIIStringEncoding],
-        [message cStringUsingEncoding:NSASCIIStringEncoding]);
+    return libpd_finish_message([receiverName cStringUsingEncoding:NSASCIIStringEncoding],
+                                [message cStringUsingEncoding:NSASCIIStringEncoding]);
   }
 }
 
@@ -240,7 +235,7 @@ static void messageHook(const char *src, const char* sym, int argc, t_atom *argv
 }
 
 + (void *)openFile:(NSString *)baseName path:(NSString *)pathName {
-	@synchronized(self) {
+  @synchronized(self) {
     const char *base = [baseName cStringUsingEncoding:NSASCIIStringEncoding];
     const char *path = [pathName cStringUsingEncoding:NSASCIIStringEncoding];
 		return libpd_openfile(base, path);
@@ -254,13 +249,13 @@ static void messageHook(const char *src, const char* sym, int argc, t_atom *argv
 }
 
 + (int)dollarZeroForFile:(void *)x {
-	@synchronized(self) {
+  @synchronized(self) {
     return libpd_getdollarzero(x);
   }
 }
 
 + (int)arraySizeForArrayNamed:(NSString *)arrayName {
-	@synchronized(self) {
+  @synchronized(self) {
     return libpd_arraysize([arrayName cStringUsingEncoding:NSASCIIStringEncoding]);
   }
 }
@@ -276,6 +271,60 @@ static void messageHook(const char *src, const char* sym, int argc, t_atom *argv
   @synchronized(self) {
     const char *name = [arrayName cStringUsingEncoding:NSASCIIStringEncoding];
     return libpd_write_array(name, offset, sourceArray, n);
+  }
+}
+
++ (int)sendNoteOn:(int)channel pitch:(int)pitch velocity:(int)velocity {
+  @synchronized(self) {
+    return libpd_noteon(channel, pitch, velocity);
+  }
+}
+
++ (int)sendControlChange:(int)channel controller:(int)controller value:(int)value {
+  @synchronized(self) {
+    return libpd_controlchange(channel, controller, value);
+  }
+}
+
++ (int)sendProgramChange:(int)channel value:(int)value {
+  @synchronized(self) {
+    return libpd_programchange(channel, value);
+  }
+}
+
++ (int)sendPitchBend:(int)channel value:(int)value {
+  @synchronized(self) {
+    return libpd_pitchbend(channel, value);
+  }
+}
+
++ (int)sendAftertouch:(int)channel value:(int)value {
+  @synchronized(self) {
+    return libpd_aftertouch(channel, value);
+  }
+}
+
++ (int)sendPolyAftertouch:(int)channel pitch:(int)pitch value:(int)value {
+  @synchronized(self) {
+    return libpd_polyaftertouch(channel, pitch, value);
+  }
+}
+
++ (int)sendMidiByte:(int)port byte:(int)byte {
+  @synchronized(self) {
+    return libpd_midibyte(port, byte);
+  }
+}
+
++ (int)sendSysex:(int)port byte:(int)byte {
+  @synchronized(self) {
+    return libpd_sysex(port, byte);
+  }
+}
+
++ (int)sendSysRealTime:(int)port byte:(int)byte {
+  @synchronized(self) {
+    return libpd_sysrealtime(port, byte);
   }
 }
 
